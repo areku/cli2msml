@@ -9,11 +9,10 @@ setup(
     author='Alexander Weigl',
     author_email='uiduw@student.kit.edu',
     description='Converter for CLI apps into MSML Operators',
-    install_requires=['cliff', 'click', 'path.py', 
-        'colorama', 'pyyaml', 'jinja2'],
+    install_requires=['path.py', 'colorama', 'pyyaml', 'jinja2'],
     entry_points={
         'console_scripts': [
-            'cli2msml=cli2msml:cli'
+            'cli2msml=cli2msml:main'
         ],
     },
     classifiers=(

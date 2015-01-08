@@ -1,4 +1,3 @@
-from __future__ import print_function
 # Copyright (C) 2014 Alexander Weigl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -13,6 +12,7 @@ from __future__ import print_function
 #
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
+from __future__ import print_function
 
 """Transfers CLI executables into an MSML-usable form.
 
@@ -23,107 +23,121 @@ __author__ = 'Alexander Weigl <uiduw@student.kit.edu>'
 __date__ = "2014-12-05"
 __version__ = "0.2"
 
+from .log import *
 
-import argparse
 import subprocess
 import os
 import os.path
-import sys
 import jinja2
 from path import path
 
-import binding
+from lxml import etree
+
+do = debug
+
 
 # region parameter conversion
 class MsmlArgument(object):
     def __init__(self, **kwargs):
         self.name = None
-        self.physcial = None
+        self.physical = None
         self.logical = None
         self.default = None
         self.doc = None
         self.target = None
+        self.cli_flag = None
+        self.channel = None
 
-# maps CLI type to MSML types
-TYPE_TABLE = {
-    'b': 'bool',
-    'boolean': 'bool',
-    'double': 'double',
-    'd': 'double',
-    'string_vector': 'vector.string',
-    'integer' : 'int',
-    'p': 'vector.int', # point (2d/3d)s
-}
+        self.__dict__.update(kwargs)
 
 
-def default_arg(obj):
-    arg = MsmlArgument()
-    arg.name = obj.name
-
-    typ = None
-    if obj.longflag and obj.longflag:
-        typ = obj.longflag._complexTypeDefinition__content
-    elif obj.flag:
-        typ = obj.flag._complexTypeDefinition__content
-
-    if typ in TYPE_TABLE:
-        arg.physical = TYPE_TABLE[typ]
-    elif typ is None:
-        pass
-    else:
-        print("%s is not defined in the TYPE_TABLE" % typ, file=sys.stderr)
-        arg.physical = typ
+def gather_enum_values(parent):
+    l = []
+    for element in parent.getiterator('element'):
+        l.append(element.text)
+    return l
 
 
+def file_suffixes(parent):
+    p = parent.get('fileExtensions', "")
+    return map(lambda x: x.strip(".*").upper(), p.split(","))
+
+
+def default_arg(obj, physical=None, logical=None, enum=False):
+    arg = MsmlArgument(physical=physical, logical=logical)
+    arg.name = obj.findtext('name')
+
+    longflag = obj.findtext('longflag')
+    flag = obj.findtext('flag')
+
+    arg.cli_flag = "--%s" % longflag if longflag else "-%s" % flag
     arg.logical = ""
 
-    if obj.default:
-        arg.default = obj.default.replace('"', '').replace("'", '')
+    default = obj.findtext("default")
 
-    arg.index = obj.index
+    if default:
+        arg.default = default.replace('"', '').replace("'", '')
 
-    arg.doc = "%s\n\n%s" % (obj.label, obj.description)
+    arg.index = obj.findtext('index')
+
+    arg.doc = "%s\n\n%s" % (obj.findtext('label'), obj.findtext('description'))
+
+    if enum:
+        values = gather_enum_values(obj)
+        arg.doc += "\n:Possible Values: %s" % values
+
+    arg.channel = obj.findtext('channel')
+
     return arg
 
 
+_label = lambda x: None
+_description = lambda x: None
+
+
 def _integer_enumeration(integer_enumeration):
-    return default_arg(integer_enumeration)
+    return default_arg(integer_enumeration, 'vector.int', enum=True)
 
 
 def _integer_vector(integer_vector):
-    return default_arg(integer_vector)
+    return default_arg(integer_vector, 'vector.int', )
 
 
 def _directory(directory):
-    return default_arg(directory)
+    arg = default_arg(directory, 'str')
+    arg.doc += "\n:Note: Should be a directory"
+    return arg
 
 
 def _double(double):
-    return default_arg(double)
+    return default_arg(double, 'float')
 
 
 def _double_enumeration(enum):
-    return default_arg(enum)
+    return default_arg(enum, 'float', enum=True)
 
 
 def _double_vector(vec):
-    return default_arg(vec)
+    return default_arg(vec, 'vector.float')
 
 
 def _file(fil):
-    return default_arg(fil)
+    arg = default_arg(fil, 'InFile')
+    sfx = file_suffixes(fil)
+    arg.physical = sfx
+    return arg
 
 
 def _float(floot):
-    return default_arg(floot)
+    return default_arg(floot, 'float', enum=True)
 
 
 def _float_enumeration(enum):
-    return default_arg(enum)
+    return default_arg(enum, 'float')
 
 
 def _float_vector(vec):
-    return default_arg(vec)
+    return default_arg(vec, 'float.vector')
 
 
 def _geometry(geometry):
@@ -131,36 +145,38 @@ def _geometry(geometry):
 
 
 def _image(image):
-    return default_arg(image)
+    arg = default_arg(image, 'Image')
+    sfx = file_suffixes(image)
+    arg.physical = ','.join(map(lambda x: 'Image.%s' % x, sfx))
+    return arg
 
 
 def _point(point):
-    return default_arg(point)
+    return default_arg(point, 'Point2D')
 
 
 def _region(region):
-    return default_arg(region)
+    return default_arg(region, 'Region')
 
 
 def _string(string):
-    return default_arg(string)
+    return default_arg(string, 'str')
 
 
 def _string_enumeration(enum):
-    return default_arg(enum)
+    return default_arg(enum, 'str', enum=True)
 
 
 def _string_vector(vec):
-    return default_arg(vec)
+    return default_arg(vec, 'vector.str')
 
 
 def _boolean(boolean):
-    return default_arg(boolean)
+    return default_arg(boolean, 'bool')
 
 
 def _integer(integer):
-    return default_arg(integer)
-
+    return default_arg(integer, 'int')
 
 # endregion
 # region jinja
@@ -173,10 +189,13 @@ def indent(string, i):
 
 jinjaenv.globals["indent"] = indent
 
-operator_template = jinjaenv.get_template("operator.jinja2")
-
-
+operator_template_msml = jinjaenv.get_template("operator.msml.jinja2")
+operator_template_rst = jinjaenv.get_template("operator.rst.jinja2")
 # endregion
+
+class AbortOperationError(BaseException):
+    pass
+
 
 class CreateCLI(object):
     def __init__(self, cli_exec):
@@ -184,80 +203,75 @@ class CreateCLI(object):
         self.name = path(self._executable).namebase
 
     def _get_xml(self):
-        sp = subprocess.Popen(["--xml"], executable=self._executable, stderr=subprocess.STDOUT, stdout=subprocess.PIPE,
+        command = "%s --xml" % self._executable
+        sp = subprocess.Popen(command,
+                              stderr=subprocess.STDOUT,
+                              stdout=subprocess.PIPE,
                               shell=True)
         sp.wait()
         if sp.returncode == 0:
             return sp.stdout.read()
         else:
-            raise BaseException("-xml not worked")
+            error(" '%s' did not work", command)
+            raise AbortOperationError()
+
 
     def _get_cli_model(self):
-        xml = self._get_xml()
-        return binding.CreateFromDocument(xml)
+        self._xml = self._get_xml()
+        do("XML retrieved, create binding")
+        try:
+            parser = etree.XMLParser(encoding="utf-8",
+                                     # TODO XMLSchema_schema=".",
+                                     remove_blank_text=True,
+                                     remove_comments=True,
+                                     remove_pis=True, strip_cdata=True
+            )
+            b = etree.fromstring(self._xml, parser)
+            return b
+        except BaseException as e:
+            error("Could not parse XML from %s", self._executable)
+            print(e)
+            print(self._xml)
+            raise AbortOperationError()
 
     def do(self):
+        do("Executable %s", self._executable)
         model = self._get_cli_model()
-        category = model.category
-        title = model.title or self.name
-        description = model.description
-        license = model.license or "unknown"
-        contributor = model.contributor
+
+        category = model.findtext('category')
+        title = model.findtext('title') or self.name
+        description = model.findtext('description')
+        license = model.findtext('license') or "unknown"
+        contributor = model.findtext('contributor')
+
+        debug("Category is %s", category)
+        debug("Title is %s", title)
+        debug("Description is %s", description)
+        debug("License is %s", license)
+        debug("Contributor is %s", contributor)
 
         self.outputs = list()
         self.parameters = list()
         self.inputs = list()
 
         defined_slots = []
-
-        TYPES = (
-            "boolean",
-            "directory",
-            "double",
-            "double_enumeration",
-            "double_vector",
-            "float",
-            "float_enumeration",
-            "float_vector",
-            "integer",
-            "integer_enumeration",
-            "integer_vector",
-            "point",
-            "region",
-            "string",
-            "string_enumeration",
-            "string_vector",
-            "file",
-            "geometry",
-            "image",
-        )
-
-        for ps in model.parameters:
-            for t in TYPES:
-                fn = "_%s" % t
+        for ps in model.iterfind('parameters'):
+            for p in ps.iterchildren():
+                fn = "_%s" % p.tag.replace("-", '_')
                 fn = globals()[fn]
-                self.group(fn, getattr(ps, t))
+                r = fn(p)
+                if r:
+                    if r.channel == 'input':
+                        ls = self.inputs
+                    elif r.channel == 'output':
+                        ls = self.outputs
+                    else:
+                        ls = self.parameters
 
-                # self._directory(ps.double)
-                # self._double(ps.double)
-                # self._double_enumeration(ps.double_enumeration)
-                # self._double_vector(ps.double_vector)
-                # self._float(ps.float)
-                # self._float_enumeration(ps.float_enumeration)
-                # self._float_vector(ps.float_vector)
-                # self._integer(ps.integer)
-                # self._integer_enumeration(ps.integer_enumeration)
-                # self._integer_vector(ps.integer_vector)
-                # self._point(ps.point)
-                # self._region(ps.region)
-                # self._string(ps.string)
-                # self._string_enumeration(ps.string_enumeration)
-                # self._string_vector(ps.string_vector)
-                # self._file(ps.file)
-                # self._geometry(ps.geometry)
-                # self._image(ps.image)
+                    ls.append(r)
 
-        return operator_template.render(
+        self._values = dict(
+            template = self.template,
             name=self.name,
             documentation="",
             executable=self._executable,
@@ -271,44 +285,34 @@ class CreateCLI(object):
             outputs=self.outputs
         )
 
-    def group(self, fn, elements):
-        for e in elements:
-            arg = fn(e)
+    @property
+    def template(self):
+        sort_by_index = lambda x: sorted(x, lambda a, b: cmp(int(a.index), int(b.index)))
+        from StringIO import StringIO
 
-            if e.channel == "input":
-                self.inputs.append(arg)
-            elif e.channel == "output":
-                self.outputs.append(arg)
-            else:
-                self.parameters.append(arg)
+        def format_args(args):
+            buf = StringIO()
 
+            for a in args:
+                buf.write(a.cli_flag)
+                buf.write("={")
+                buf.write(a.name)
+                buf.write("} ")
 
-#region command line
-def create_argument_parser():
-    p = argparse.ArgumentParser()
-    p.add_argument("executable", metavar="EXECUTABLE", nargs='*', help="CLI executable")
-    p.add_argument("-o", "--output-dir", metavar="FOLDER", action="store", dest="output_dir", help="output folder",
-                   default="alphabet/")
-    return p
+            return buf.getvalue()
 
+        t = "{name} {para} {out} {inp}"
 
-def main():
-    args = create_argument_parser().parse_args()
+        para = format_args(self.parameters)
+        out = format_args(self.outputs)
+        inp = format_args(self.inputs)
 
-    if not args.executable:
-        binfolder = path("./bin/")
-        print("ALL MODE ON, take every executable in %s" % binfolder.abspath())
-        executables = filter(lambda fpath: os.access(fpath, os.X_OK),
-                             binfolder.walkfiles("*",errors="ignore"))
-    else:
-        executables = args.executable
+        return t.format(name=self.name, para=para, out=out, inp=inp)
 
-    for executable in executables:
-        create = CreateCLI(executable)
-        msml_xml = create.do()
-        fil = "%s/%s.msml.xml" % (args.output_dir, create.name)
-        print("Write %s to %s" % (executable, fil))
-        with open(fil, 'w') as fp:
-            fp.write(msml_xml)
+    @property
+    def msml(self):
+        return operator_template_msml.render(**self._values)
 
-#endregion
+    @property
+    def rst(self):
+        return operator_template_rst.render(**self._values)

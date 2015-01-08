@@ -12,7 +12,7 @@
                xsi:schemaLocation="http://sfb125.de/msml"
                name="{{ name }}">
 
-    <meta>
+    <annotation>
         <entry key="doc">
             {{ title }}
             ===========
@@ -25,11 +25,11 @@
             :Contributor: {{ contributor }}
         </entry>
         <entry key="category" value="{{ category }}" />
-    </meta>
+    </annotation>
 
 
     <runtime>
-        <sh template="{{ executable }} {{ params }}"/>
+        <sh template="{{ template }}"/>
     </runtime>
 
     <input>
