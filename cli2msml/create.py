@@ -35,20 +35,77 @@ from lxml import etree
 
 do = debug
 
+# Configuration Object
+config = {
+    'FILE_EXTENSIONS_TO_SORTS': {},
+    'FLAGS_TYPES': {},
+    'SLOT_NAME_FLAG': {},
+    'DEFAULT_OVERRIDES': {}
+}
+
+
+def set_config(cfg):
+    global config
+    if cfg:
+        config = cfg
+
 
 # region parameter conversion
-class MsmlArgument(object):
-    def __init__(self, **kwargs):
-        self.name = None
-        self.physical = None
-        self.logical = None
-        self.default = None
-        self.doc = None
-        self.target = None
-        self.cli_flag = None
-        self.channel = None
+class chainproperty(object):
+    def __init__(self, name):
+        self._name = name
 
-        self.__dict__.update(kwargs)
+    def __get__(self, instance, owner=None):
+        if hasattr(instance, "other"):
+            val =  getattr(getattr(instance, "other"), self._name, None)
+            if val is not None:
+                return val
+        try:
+            return instance[self._name]
+        except KeyError:
+            raise AttributeError()
+
+    def __set__(self, instance, value):
+        instance[self._name] = value
+
+
+class MsmlArgument(dict):
+    def __init__(self,iterable=None,**kwargs):
+        if iterable:
+            super(MsmlArgument, self).__init__(iterable)
+        else:
+            super(MsmlArgument, self).__init__(**kwargs)
+
+
+        #self["doc"] = ""
+        self.tag = None
+        self.longflag = None
+        self.flag = None
+
+
+    name = chainproperty("name")
+    physical = chainproperty("physical")
+    logical = chainproperty("logical")
+    default = chainproperty("default")
+    doc = chainproperty("doc")
+    target = chainproperty("target")
+    channel = chainproperty("channel")
+
+
+    @property
+    def cli_flag(self):
+        if self.tag in config['FLAGS_TYPES']:
+            return "{{%s|flag('%s')}}" % (self.name, self.longflag or self.flag)
+        else:
+            return "{{%s|option('%s')}}" % (self.name, self.longflag or self.flag)
+
+
+    def copy(self):
+        arg =  MsmlArgument(self)
+        arg.longflag = self.longflag
+        arg.flag = self.flag
+        arg.tag = self.tag
+        return arg
 
 
 def gather_enum_values(parent):
@@ -60,6 +117,13 @@ def gather_enum_values(parent):
 
 def file_suffixes(parent):
     p = parent.get('fileExtensions', "")
+
+    if p in config['FILE_EXTENSIONS_TO_SORTS']:
+        return config['FILE_EXTENSIONS_TO_SORTS'][p]
+    elif p.find(','):
+        info("No translation for file extensions '%s' to sort\n"
+             "You should consider to add something in FILE_EXTENSIONS_TO_SORTS", p)
+
     return map(lambda x: x.strip(".*").upper(), p.split(","))
 
 
@@ -67,13 +131,13 @@ def default_arg(obj, physical=None, logical=None, enum=False):
     arg = MsmlArgument(physical=physical, logical=logical)
     arg.name = obj.findtext('name')
 
-    longflag = obj.findtext('longflag')
-    flag = obj.findtext('flag')
+    arg.longflag = obj.findtext('longflag')
+    arg.flag = obj.findtext('flag')
 
-    arg.cli_flag = "--%s" % longflag if longflag else "-%s" % flag
+    arg.tag = obj.tag
+
     arg.logical = ""
-
-    default = obj.findtext("default")
+    default = obj.findtext("_default")
 
     if default:
         arg.default = default.replace('"', '').replace("'", '')
@@ -87,6 +151,9 @@ def default_arg(obj, physical=None, logical=None, enum=False):
         arg.doc += "\n:Possible Values: %s" % values
 
     arg.channel = obj.findtext('channel')
+
+
+    arg.other = config['DEFAULT_OVERRIDES'].get(arg.name)
 
     return arg
 
@@ -137,7 +204,7 @@ def _float_enumeration(enum):
 
 
 def _float_vector(vec):
-    return default_arg(vec, 'float.vector')
+    return default_arg(vec, 'vector.float')
 
 
 def _geometry(geometry):
@@ -147,7 +214,8 @@ def _geometry(geometry):
 def _image(image):
     arg = default_arg(image, 'Image')
     sfx = file_suffixes(image)
-    arg.physical = ','.join(map(lambda x: 'Image.%s' % x, sfx))
+    # arg.physical = ','.join(map(lambda x: 'Image.%s' % x, sfx))
+    arg.physical = sfx
     return arg
 
 
@@ -191,6 +259,7 @@ jinjaenv.globals["indent"] = indent
 
 operator_template_msml = jinjaenv.get_template("operator.msml.jinja2")
 operator_template_rst = jinjaenv.get_template("operator.rst.jinja2")
+operator_template_md = jinjaenv.get_template("operator.md.jinja2")
 # endregion
 
 class AbortOperationError(BaseException):
@@ -270,8 +339,20 @@ class CreateCLI(object):
 
                     ls.append(r)
 
+        ##
+        # duplicate output slots for input names
+        for out in self.outputs:
+            para = out.copy()
+            para.name = "t" + out.name
+            para.target = True
+            para.other = config['DEFAULT_OVERRIDES'].get(para.name, None)
+
+            para.physical = "str" # hardcore setting of physical string type
+
+            self.parameters.insert(0, para)
+
         self._values = dict(
-            template = self.template,
+            template=self.template,
             name=self.name,
             documentation="",
             executable=self._executable,
@@ -288,26 +369,16 @@ class CreateCLI(object):
     @property
     def template(self):
         sort_by_index = lambda x: sorted(x, lambda a, b: cmp(int(a.index), int(b.index)))
-        from StringIO import StringIO
-
-        def format_args(args):
-            buf = StringIO()
-
-            for a in args:
-                buf.write(a.cli_flag)
-                buf.write("={")
-                buf.write(a.name)
-                buf.write("} ")
-
-            return buf.getvalue()
-
         t = "{name} {para} {out} {inp}"
 
+        def format_args(seq):
+            return ' '.join(map(lambda x: x.cli_flag, seq))
+
         para = format_args(self.parameters)
-        out = format_args(self.outputs)
+        # out = format_args(self.outputs)
         inp = format_args(self.inputs)
 
-        return t.format(name=self.name, para=para, out=out, inp=inp)
+        return t.format(name=self.name, para=para, out="", inp=inp)
 
     @property
     def msml(self):
@@ -316,3 +387,8 @@ class CreateCLI(object):
     @property
     def rst(self):
         return operator_template_rst.render(**self._values)
+
+    @property
+    def markdown(self):
+        return operator_template_md.render(**self._values)
+

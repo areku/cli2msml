@@ -1,0 +1,31 @@
+{% macro slot_list(name, slots) %}
+## {{ name }}
+{% for s in slots %}
+* **{{ s.name }}** : {{ s.physical}}/{{ s.logical}}
+
+  **default** {{ s.default }}
+  **target** {{ s.target }}
+  **index** {{ s.index }}
+  **channel** {{ s.channel }}
+  **cli_flag** {{ s.cli_flag }}
+
+  {{ s.doc|indent(2) }}
+{% endfor %}
+{% endmacro %}
+
+# {{ title }}
+
+{{ documentation}}
+
+{{ description }}
+
+**License** {{ license }}
+**Contributor** {{ contributor }}
+**Category** {{ category }}
+
+**type** **ShellOperator**
+**template** ``{{ template }}``
+
+{{ slot_list("Inputs", inputs) }}
+{{ slot_list("Output", outputs) }}
+{{ slot_list("Parameter", parameters) }}

@@ -1,8 +1,12 @@
 {% macro argument(seq) -%}
 {% for i in seq %}
-        <arg name="{{ i.name }}" {% if i.logical %}logical="{{ i.logical }}"{% endif %} physical="{{ i.physical }}" {% if i.default %}default="{{i.default}}"{% endif %} {% if i.target %}target="{{ i.target }}"{% endif %} >
+        <arg name="{{ i.name }}" {% if i.logical %}
+             logical="{{ i.logical }}"{% endif %}
+             physical="{{ i.physical }}"
+             {% if i.default %}default="{{i.default}}"{% endif %}
+             {% if i.target %}target="true"{% endif %}>
             <meta key="doc">
-                {{ i.doc | indent(20) }}
+            <![CDATA[{{ i.doc | indent(20) }}]]>
             </meta>
         </arg>
 {% endfor %}

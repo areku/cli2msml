@@ -34,9 +34,6 @@
 __author__ = "Alexander Weigl"
 __date__ = "2014-05-05"
 
-import inspect
-import os.path
-
 import logging
 import logging.config
 
@@ -133,6 +130,8 @@ class ColoredFormatter(logging.Formatter):
         # Add the color codes to the record
         record.__dict__.update(escape_codes)
 
+        record.msg = record.msg.replace('\n', '\n |       ')
+
         # If we recognise the level name,
         # add the levels color as `log_color`
         if record.levelname in self.log_colors:
@@ -154,9 +153,22 @@ class ColoredFormatter(logging.Formatter):
 
         return message
 
+    def formatException(self, ei):
+        ''' prefix traceback info for better representation '''
+        # .formatException returns a bytestring in py2 and unicode in py3
+        # since .format will handle unicode conversion,
+        # str() calls are used to normalize formatting string
+        s = super(logger.BaseFormatter, self).formatException(ei)
+        # fancy format traceback
+        s = str('\n').join(str(' | ') + line for line in s.splitlines())
+        # separate the traceback from the preceding lines
+        s = str(' |___\n{}').format(s)
+        return s
+
+
 def set_verbosity(log_level):
-    LEVELS = { x : getattr(logging, x)
-               for x in ('CRITICAL', 'FATAL', 'ERROR', 'WARNING', 'WARN', 'INFO', 'DEBUG', 'NOTSET')}
+    LEVELS = {x: getattr(logging, x)
+              for x in ('CRITICAL', 'FATAL', 'ERROR', 'WARNING', 'WARN', 'INFO', 'DEBUG', 'NOTSET')}
 
     if log_level in LEVELS:
         log_level = LEVELS[log_level]
@@ -170,26 +182,12 @@ LOGGING = {
     'version': 1,
     'disable_existing_loggers': True,
     'formatters': {
-        'long':{
-          'format': "%(asctime)-20s %(levelname)-8s %(name)-20s  %(message)s [%(filename)s:%(lineno)d in %(module)s:%(funcName)s]"
-        },
-        'default': {
-            'format': '%(asctime)s %(levelname)s %(name)s %(message)s'
-        },
         'color': {
             '()': ColoredFormatter,
             'format': "%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(message)s"
         }
     },
     'handlers': {
-        'file': {
-            '()': 'logging.FileHandler',
-            'level': 'DEBUG',
-            'formatter': 'long',
-            'filename': 'msml.log',
-            'mode': 'w',
-            'encoding': 'utf-8',
-        },
         'console': {
             '()': 'logging.StreamHandler',
             'stream': sys.stdout,
@@ -205,11 +203,12 @@ LOGGING = {
 logging.config.dictConfig(LOGGING)
 logger = logging.getLogger("root")
 
+logger.debug("LOGGING ACTIVATED")
 
-error     = (logger.error)
-warn      = (logger.warn)
-info      = (logger.info)
-debug     = (logger.debug)
-critical  = (logger.critical)
+error = (logger.error)
+warn = (logger.warn)
+info = (logger.info)
+debug = (logger.debug)
+critical = (logger.critical)
 exception = (logger.exception)
-fatal     = (logger.fatal)
+fatal = (logger.fatal)

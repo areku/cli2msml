@@ -20,7 +20,7 @@ from .log import *
 import argparse
 import os
 from path import path
-from cli2msml.create import CreateCLI, AbortOperationError
+from cli2msml.create import CreateCLI, AbortOperationError, set_config, MsmlArgument
 
 #region command line
 def create_argument_parser():
@@ -28,11 +28,30 @@ def create_argument_parser():
     p.add_argument("executable", metavar="EXECUTABLE", nargs='*', help="CLI executable")
     p.add_argument("-o", "--output-dir", metavar="FOLDER", action="store", dest="output_dir", help="output folder",
                    default="alphabet/")
-    p.add_argument("-v", '--verbose', dest="verbosity", action="count",
+    p.add_argument("-d", "--doc-output-dir",
+                   metavar="FOLDER", action="store",
+                   dest="doc_dir", help="output folder for documentation",
+                   default="docs/")
+
+    p.add_argument("-v", '--verbose',
+                        default=2,
+                        dest="verbosity", action="count",
                         help="select the verbosity of this program")
     return p
 
 import cli2msml.log as log
+
+def load_config(filename = "c2mconf.py"):
+    filename = path(filename)
+    if filename.exists():
+        g = {"Slot" : MsmlArgument}
+        l = {}
+        execfile(filename, g, l)
+        log.info("Load configuration: %s", filename.abspath())
+        return l
+    else:
+        log.info("Configuration not found: %s", filename.abspath())
+        return None
 
 def main():
     args = create_argument_parser().parse_args()
@@ -43,7 +62,6 @@ def main():
         "DEBUG" if args.verbosity == 3 else
         "ERROR")
 
-
     if  os.path.isdir(args.executable[0]):
         binfolder = path(args.executable[0])
         print("ALL MODE ON, take every executable in %s" % binfolder.abspath())
@@ -51,6 +69,12 @@ def main():
                              binfolder.walkfiles("*",errors="ignore"))
     else:
         executables = args.executable
+
+
+    set_config(load_config())
+
+    path(args.output_dir).makedirs_p()
+    path(args.doc_dir).makedirs_p()
 
     for executable in executables:
         try:
@@ -62,10 +86,15 @@ def main():
                 fp.write(create.msml)
 
 
-            fil = "%s/%s.rst" % (args.output_dir, create.name)
+            fil = "%s/%s.rst" % (args.doc_dir, create.name)
             info("Write %s to %s" , executable, fil)
             with open(fil, 'w') as fp:
                 fp.write(create.rst)
+
+            fil = "%s/%s.md" % (args.doc_dir, create.name)
+            info("Write %s to %s" , executable, fil)
+            with open(fil, 'w') as fp:
+                fp.write(create.markdown)
 
         except AbortOperationError:
             pass
