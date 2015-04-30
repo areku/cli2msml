@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='cli2msml',
-    version='0.1-alpha',
+    version='0.2',
     url='https://github.com/CognitionGuidedSurgery/cli2msml',
     license='GPL v3',
     py_modules=['cli2msml'],
